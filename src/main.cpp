@@ -22,6 +22,10 @@
 // Sensor reader
 #include "basicSensorReader.h"
 
+// Certificate manager
+#include <ECManager.h>
+#include <ATManager.h>
+
 // Linux net includes
 #include <sys/ioctl.h>
 #include <net/if.h>
@@ -214,6 +218,7 @@ void CAMtxThr(std::string gnss_device,
            std::string log_filename_CAM,
            std::string log_filename_GNsecurity,
            ldmmap::LDMMap *db_ptr,
+           ATManager *atManager,
            double pos_th,
            double speed_th,
            double head_th,
@@ -250,6 +255,7 @@ void CAMtxThr(std::string gnss_device,
             GN.setSocketTx(sockfd, ifindex, srcmac);
             GN.setStationProperties(vehicleID, StationType_passengerCar);
             GN.setSecurity(enable_security);
+            GN.setATmanager(atManager);
             if(log_filename_GNsecurity != "dis" && log_filename_GNsecurity != ""){
                 GN.setLogFile2(log_filename_GNsecurity);
             }
@@ -609,7 +615,7 @@ int main (int argc, char *argv[]) {
 
 	// Parse the command line options with the TCLAP library
 	try {
-		TCLAP::CmdLine cmd("OScar: the open ETSI C-ITS implementation", ' ', "4.3");
+		TCLAP::CmdLine cmd("OScar: the open ETSI C-ITS implementation", ' ', "5.2sec");
     
 		// Arguments: short option, long option, description, is it mandatory?, default value, type indication (just a string to help the user)
 		TCLAP::ValueArg<std::string> vifName("I","interface","Broadcast dissemination interface. Default: wlan0.",false,"wlan0","string");
@@ -889,7 +895,14 @@ int main (int argc, char *argv[]) {
 			<< "Socket: " << sockfd << ". Error: " << strerror(errno) << "." << std::endl;
 		exit(EXIT_FAILURE);
 	}
-	
+
+    // Manage EC
+    ECManager ecManager;
+    ecManager.manageRequest();
+    ATManager atManager(&terminatorFlag);
+    atManager.run();
+
+
 	// Create a new DB object
 	ldmmap::LDMMap *db_ptr = new ldmmap::LDMMap();
     db_ptr->setStationID(vehicleID);
@@ -945,6 +958,7 @@ int main (int argc, char *argv[]) {
                                         log_filename_CAM,
                                         log_filename_GNsecurity,
                                         db_ptr,
+                                        &atManager,
                                         pos_th,
                                         speed_th,
                                         head_th,
@@ -1055,6 +1069,7 @@ int main (int argc, char *argv[]) {
         t.join();
     }
 
+
 	terminatorFlag=true;
 	
 	pthread_join(dbcleaner_tid,nullptr);
@@ -1064,6 +1079,8 @@ int main (int argc, char *argv[]) {
 	}
 
 	db_ptr->clear();
+
+    atManager.terminate();
 
 	// Close the socket
 	close(sockfd);

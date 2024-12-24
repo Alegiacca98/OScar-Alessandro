@@ -1,3 +1,7 @@
+// Secure Header
+// Here is created the structure of the secure packet, and the functions to sign and verify the signature.
+// Created by Alessandro Giaccaglini - alessandro.giaccaglini@gmail.com
+
 #include "security.h"
 #include "SequenceOf.hpp"
 #include "Seq.hpp"
@@ -36,26 +40,12 @@ Security::~Security ()
 Security::Security ()
 {
     //m_eventCleaner = Simulator::Schedule(MilliSeconds (1000),&Security::mapCleaner,this);
+    m_atmanager = nullptr;
     m_ecKey = nullptr;
     m_protocolVersion = 3;
     m_hashId = HashAlgorithm_sha256;
-    m_psid = 36;
-    m_psid2 = 37;
     m_generationTime = 629405121939330;
-    m_digest = "1e7d7e81";
-    m_version = 3;
-    m_type = CertificateType_explicit;
-    m_issuer = "00000000";
-    m_id = 0;
-    m_cracaId = "000";
-    m_crlSeries = 0;
-    m_validityPeriod_start = 628830005;
-    m_validityPeriod_duration = 168;
-    m_bitmapSsp = "010000";
-    m_bitmapSsp2 = "01901a25";
-    m_p256_x_only_Cert = "c35458670a819720adf1be43c782c2c0";
-    m_SsigCert = "z35458670a819720adf1be43c782c2c0";
-
+    m_digest = "";
 }
 
 void Security::mapCleaner ()
@@ -114,7 +104,7 @@ Security::print_openssl_error ()
     std::cerr << buffer << std::endl;
 }
 
-
+/*
 Security::GNpublicKey
 Security::generateECKeyPair ()
 {
@@ -185,6 +175,7 @@ Security::generateECKeyPair ()
 
     return publicKey;
 }
+*/
 
 // Function to sign a hash with a private key
 ECDSA_SIG *
@@ -197,6 +188,90 @@ Security::signHash (const unsigned char *hash, EC_KEY *ec_key)
         print_openssl_error ();
     }
     return signature;
+}
+
+
+// Function to load an EC key pair from a file
+EC_KEY* Security::loadECKeyFromFile(const std::string &private_key_file, const std::string &public_key_file)
+{
+    // Load the private key
+    FILE *priv_file = fopen(private_key_file.c_str(), "r");
+    if (!priv_file)
+    {
+        std::cerr << "Error opening file to load private key" << std::endl;
+        return nullptr;
+    }
+
+    EC_KEY *ec_key = PEM_read_ECPrivateKey(priv_file, nullptr, nullptr, nullptr);
+    if (!ec_key)
+    {
+        std::cerr << "Error reading private key from file" << std::endl;
+        ERR_print_errors_fp(stderr);
+        fclose(priv_file);
+        return nullptr;
+    }
+    fclose(priv_file);
+
+    // Load the public key
+    FILE *pub_file = fopen(public_key_file.c_str(), "r");
+    if (!pub_file)
+    {
+        std::cerr << "Error opening file to load public key" << std::endl;
+        EC_KEY_free(ec_key);
+        return nullptr;
+    }
+
+    EC_KEY *pub_key = PEM_read_EC_PUBKEY(pub_file, nullptr, nullptr, nullptr);
+    if (!pub_key)
+    {
+        std::cerr << "Error reading public key from file" << std::endl;
+        print_openssl_error();
+        fclose(pub_file);
+        EC_KEY_free(ec_key);
+        return nullptr;
+    }
+    fclose(pub_file);
+
+    // Extract the public key point and set it to the private key EC_KEY
+    const EC_POINT *pub_key_point = EC_KEY_get0_public_key(pub_key);
+    if (!pub_key_point)
+    {
+        std::cerr << "Error getting public key point" << std::endl;
+        print_openssl_error();
+        EC_KEY_free(ec_key);
+        EC_KEY_free(pub_key);
+        return nullptr;
+    }
+
+    if (EC_KEY_set_public_key(ec_key, pub_key_point) != 1)
+    {
+        std::cerr << "Error setting public key to the private key object" << std::endl;
+        print_openssl_error();
+        EC_KEY_free(ec_key);
+        EC_KEY_free(pub_key);
+        return nullptr;
+    }
+
+    EC_KEY_free(pub_key);
+    return ec_key;
+}
+
+// Function to recover an EC key pair from a file
+void Security::recoverECKeyPair()
+{
+    std::string private_key_file = "";
+    std::string public_key_file = "";
+    private_key_file = "../../pkiReq/Res/ephSKEY2.pem";
+    public_key_file = "../../pkiReq/Res/ephPKEY2.pem";
+    EC_KEY *ec_key = nullptr;
+    ec_key = loadECKeyFromFile(private_key_file, public_key_file);
+    if (!ec_key)
+    {
+        print_openssl_error();
+    }
+    m_ecKey = EC_KEY_dup(ec_key);
+
+    EC_KEY_free(ec_key);
 }
 
 Security::GNsignMaterial
@@ -220,6 +295,7 @@ Security::signatureCreation (const std::string& tbsData_hex, const std::string& 
     unsigned char final_hash[SHA256_DIGEST_LENGTH];
     computeSHA256 (concatenatedHashes, final_hash);
 
+    recoverECKeyPair(); // try to move this otherwise it will read file every time
     EC_KEY *ec_key = EC_KEY_dup (m_ecKey);
 
     // Sign the final hash
@@ -463,40 +539,40 @@ Security::createSecurePacket (GNDataRequest_t dataRequest, bool &isCertificate)
 
         m_timestampLastCertificate = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 
-        GNpublicKey public_key = generateECKeyPair ();
+        //GNpublicKey public_key = generateECKeyPair ();
         isCertificate = true;
         asn1cpp::setField (signData->signer.present, SignerIdentifier_PR_certificate);
         // Signed Data, Signer part with always 1 Certificate in the Sequence.
         auto certList = asn1cpp::makeSeq (SequenceOfCertificate);
         auto certificate = asn1cpp::makeSeq (CertificateBase);
-        asn1cpp::setField (certificate->version, m_version);
-        asn1cpp::setField (certificate->type, CertificateType_explicit);
+        asn1cpp::setField (certificate->version, m_atmanager->getVersion());
+        asn1cpp::setField (certificate->type, m_atmanager->getType());
         asn1cpp::setField (certificate->issuer.present, IssuerIdentifierSec_PR_sha256AndDigest);
-        asn1cpp::setField (certificate->issuer.choice.sha256AndDigest, m_issuer);
-        asn1cpp::setField (certificate->toBeSigned.id.present, CertificateId_PR_none);
-        asn1cpp::setField (certificate->toBeSigned.id.choice.none, m_id);
-        asn1cpp::setField (certificate->toBeSigned.cracaId, m_cracaId);
-        asn1cpp::setField (certificate->toBeSigned.crlSeries, m_crlSeries);
-        asn1cpp::setField (certificate->toBeSigned.validityPeriod.start, m_validityPeriod_start); // start: 2023-12-05 03:00:00 (628830005)
+        asn1cpp::setField (certificate->issuer.choice.sha256AndDigest, m_atmanager->getIssuer());
+        asn1cpp::setField (certificate->toBeSigned.id.present, CertificateId_PR_name);
+        asn1cpp::setField (certificate->toBeSigned.id.choice.name, m_atmanager->getId_name());
+        asn1cpp::setField (certificate->toBeSigned.cracaId, m_atmanager->getCracaId());
+        asn1cpp::setField (certificate->toBeSigned.crlSeries, m_atmanager->getCrlSeries());
+        asn1cpp::setField (certificate->toBeSigned.validityPeriod.start, m_atmanager->getValidityPeriod_start());
         asn1cpp::setField (certificate->toBeSigned.validityPeriod.duration.present, Duration_PR_hours);
-        asn1cpp::setField (certificate->toBeSigned.validityPeriod.duration.choice.hours, m_validityPeriod_duration);
+        asn1cpp::setField (certificate->toBeSigned.validityPeriod.duration.choice.hours, m_atmanager->getValidityPeriod_duration());
 
         auto appPermission = asn1cpp::makeSeq (SequenceOfPsidSsp);
 
         // Always two items in SequenceofPsisSsp, App permission
         auto psid1 = asn1cpp::makeSeq (PsidSsp);
-        asn1cpp::setField (psid1->psid, m_psid);
+        asn1cpp::setField (psid1->psid, m_atmanager->getPsid());
         auto servicePermission1 = asn1cpp::makeSeq (ServiceSpecificPermissions);
         asn1cpp::setField (servicePermission1->present, ServiceSpecificPermissions_PR_bitmapSsp);
-        asn1cpp::setField (servicePermission1->choice.bitmapSsp, m_bitmapSsp);
+        asn1cpp::setField (servicePermission1->choice.bitmapSsp, m_atmanager->getBitmapSsp());
         asn1cpp::setField (psid1->ssp, servicePermission1);
         asn1cpp::sequenceof::pushList (*appPermission, psid1);
 
         auto psid2 = asn1cpp::makeSeq (PsidSsp);
-        asn1cpp::setField (psid2->psid, m_psid2);
+        asn1cpp::setField (psid2->psid, m_atmanager->getPsid2());
         auto servicePermission2 = asn1cpp::makeSeq (ServiceSpecificPermissions);
         asn1cpp::setField (servicePermission2->present, ServiceSpecificPermissions_PR_bitmapSsp);
-        asn1cpp::setField (servicePermission2->choice.bitmapSsp, m_bitmapSsp2);
+        asn1cpp::setField (servicePermission2->choice.bitmapSsp, m_atmanager->getBitmapSsp2());
         asn1cpp::setField (psid2->ssp, servicePermission2);
         asn1cpp::sequenceof::pushList (*appPermission, psid2);
         asn1cpp::setField (certificate->toBeSigned.appPermissions, appPermission);
@@ -504,6 +580,24 @@ Security::createSecurePacket (GNDataRequest_t dataRequest, bool &isCertificate)
 
         asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.present, VerificationKeyIndicator_PR_verificationKey);
         asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.present, PublicVerificationKey_PR_ecdsaNistP256);
+        switch(m_atmanager->getPresentVerKey()){
+            case 1:
+                asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.present, EccP256CurvePoint_PR_x_only);
+                asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.choice.compressed_y_0, m_atmanager->getVerifykeyindicator());
+                break;
+            case 3:
+                asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.present, EccP256CurvePoint_PR_compressed_y_0);
+                asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.choice.compressed_y_0, m_atmanager->getVerifykeyindicator());
+                break;
+            case 4:
+                asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.present, EccP256CurvePoint_PR_compressed_y_1);
+                asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.choice.compressed_y_0, m_atmanager->getVerifykeyindicator());
+                break;
+            default:
+                break;
+        }
+
+        /*
         if (public_key.prefix == "compressed_y_0")
         {
             asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.present, EccP256CurvePoint_PR_compressed_y_0);
@@ -518,12 +612,32 @@ Security::createSecurePacket (GNDataRequest_t dataRequest, bool &isCertificate)
             std::string pk_string(pk_bytes.begin(), pk_bytes.end());
             asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.choice.compressed_y_1, pk_string);
         }
+         */
         auto signatureCert = asn1cpp::makeSeq (Signature);
         asn1cpp::setField (signatureCert->present, Signature_PR_ecdsaNistP256Signature);
+        switch (m_atmanager->getPresentSignature())
+        {
+            case 1:
+                asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.present, EccP256CurvePoint_PR_x_only);
+                asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.choice.x_only, m_atmanager->getRSig());
+                break;
+            case 3:
+                asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.present, EccP256CurvePoint_PR_compressed_y_0);
+                asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.choice.compressed_y_0, m_atmanager->getRSig());
+                break;
+            case 4:
+                asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.present, EccP256CurvePoint_PR_compressed_y_1);
+                asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.choice.compressed_y_1, m_atmanager->getRSig());
+                break;
+            default:
+                break;
 
+        }
+        /*
         asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.present,  EccP256CurvePoint_PR_x_only);
         asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.choice.x_only,  m_p256_x_only_Cert);
-        asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.sSig, m_SsigCert);
+         */
+        asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.sSig, m_atmanager->getSSig());
         asn1cpp::setField (certificate->signature, signatureCert);
 
         asn1cpp::sequenceof::pushList (*certList, certificate);
@@ -531,10 +645,21 @@ Security::createSecurePacket (GNDataRequest_t dataRequest, bool &isCertificate)
 
         std::string certHex = asn1cpp::oer::encode (certificate);
         m_certificate = certHex;
+
+        // generate the digest of the certificate, so calculate the hash of certificate and take only the last 8 bytes
+        std::vector<unsigned char> certificate_bytes = hexStringToBytes (certHex);
+        unsigned char certificate_hash[SHA256_DIGEST_LENGTH];
+        computeSHA256 (certificate_bytes, certificate_hash);
+        for (int i = 24; i < 32; i++)
+        {
+            std::stringstream ss;
+            ss << std::hex << std::setw(2) << std::setfill('0') << (int) certificate_hash[i];
+            m_digest += ss.str();
+        }
+
     }
     else
     {
-
         // Signed Data, Signer field: version with only digest, other wireshark message with certificate option
         asn1cpp::setField (signData->signer.present, SignerIdentifier_PR_digest);
         asn1cpp::setField (signData->signer.choice.digest, m_digest);

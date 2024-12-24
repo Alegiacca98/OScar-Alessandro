@@ -17,6 +17,7 @@
 #include <vector>
 #include <map>
 #include <fstream>
+#include <ATManager.h>
 #include <stdexcept>
 
 extern "C" {
@@ -175,6 +176,7 @@ public:
   void setP256_compressed_x_only(std::string p256_x_only){m_p256_x_only_Cert = p256_x_only;};
 
   void setSsig(std::string Ssig){m_SsigCert = Ssig;};
+  void setATmanager(ATManager *atm){m_atmanager = atm;};
 
 
 
@@ -185,11 +187,13 @@ private:
   void computeSHA256(const std::vector<unsigned char>& data, unsigned char hash[SHA256_DIGEST_LENGTH]);
   std::vector<unsigned char> concatenateHashes(const unsigned char hash1[SHA256_DIGEST_LENGTH], const unsigned char hash2[SHA256_DIGEST_LENGTH]);
   void print_openssl_error();
-  GNpublicKey generateECKeyPair();
+  //GNpublicKey generateECKeyPair();
   ECDSA_SIG* signHash(const unsigned char* hash, EC_KEY* ec_key);
   GNsignMaterial signatureCreation( const std::string& tbsData_hex,  const std::string& certificate_hex);
   bool signatureVerification( const std::string& tbsData_hex,  const std::string& certificate_hex, const GNsgtrDC& signatureRS, const std::string& verifyKeyIndicator);
   void mapCleaner();
+  EC_KEY* loadECKeyFromFile(const std::string &private_key_file, const std::string &public_key_file);
+  void recoverECKeyPair();
 
   //EventId m_eventCleaner;
 
@@ -200,6 +204,7 @@ private:
   GNpublicKey publicKey;
   bool validSignature;
 
+  ATManager *m_atmanager;
 
   // Ieee1609Dot2Data fields
 
