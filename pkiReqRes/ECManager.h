@@ -123,13 +123,17 @@ class ECManager {
         virtual ~ECManager(); // Distruttore
 
 
-        void manageRequest();
+        bool manageRequest();
+
+        std::string getECBytes() {return ecRes.getECBytes();}
 
 
         private:
 
         std::vector<unsigned char> hexStringToBytes(const std::string &hex);
         void handleErrors();
+        void saveStringToFile(const std::string& key, const std::string& fileName);
+        std::string retrieveStringFromFile(const std::string& fileName);
         std::string to_hex_string(const unsigned char *data, size_t length);
         std::string to_hex_string(const std::vector<unsigned char> &data);
         EVP_PKEY *loadCompressedPublicKey(const std::string &compressedKey, int compression);

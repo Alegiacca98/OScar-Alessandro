@@ -251,6 +251,35 @@ void ECManager::deriveKeyWithKDF2(const unsigned char* sharedSecret, size_t secr
 }
 
 
+std::string ECManager::retrieveStringFromFile(const std::string& fileName) {
+    std::ifstream fileIn(fileName, std::ios::binary);  // Open the file in binary mode
+    std::string key;
+    if (fileIn.is_open()) {
+        size_t length;
+        fileIn.read(reinterpret_cast<char*>(&length), sizeof(length));  // Read the length of the string
+        key.resize(length);  // Resize the string
+        fileIn.read(&key[0], length);  // Read the string into the buffer
+        fileIn.close();
+        std::cout << "String retrieved: " << key << std::endl;
+    } else {
+        std::cerr << "Error opening file for reading." << std::endl;
+    }
+    return key;
+}
+
+void ECManager::saveStringToFile(const std::string& key, const std::string& fileName) {
+    std::ofstream fileOut(fileName, std::ios::binary);  // Open the file in binary mode
+    if (fileOut.is_open()) {
+        size_t length = key.size();
+        fileOut.write(reinterpret_cast<const char*>(&length), sizeof(length));  // Write the length of the string
+        fileOut.write(key.c_str(), length);  // Write the string
+        fileOut.close();
+        std::cout << "String saved to binary file." << std::endl;
+    } else {
+        std::cerr << "Error opening file for writing." << std::endl;
+    }
+}
+
 // Function to encrypt a message using ECIES
 std::vector<unsigned char> ECManager::encryptMessage(
     std::vector<unsigned char> &plaintext,
@@ -269,6 +298,10 @@ unsigned char aesKey[AES_KEY_LENGTH];
     }
 
     std::cout << "[INFO] Shared key: " << to_hex_string(aesKey,16) << std::endl;
+
+    ecRes.setAesKey(to_hex_string(aesKey,16));
+    std::string fileName = "pskEC.bin";
+    saveStringToFile(to_hex_string(aesKey,16), fileName);
 
     nonce.resize(NONCE_LENGTH);
     if (RAND_bytes(nonce.data(), NONCE_LENGTH) != 1) {
@@ -563,8 +596,8 @@ ECManager::GNpublicKey ECManager::recoverECKeyPair(bool ephemeral)
   EC_KEY *ec_key = nullptr;
   if (ephemeral)
   {
-    private_key_file = "ephSKEY.pem";
-    public_key_file = "ephPKEY.pem";
+    private_key_file = "./pkiReqRes/ephSKEY.pem";
+    public_key_file = "./pkiReqRes/ephPKEY.pem";
     ec_key = loadECKeyFromFile(private_key_file, public_key_file);
     if (!ec_key)
     {
@@ -768,12 +801,12 @@ uint32_t ECManager::getCurrentTimestamp32() {
 }
 
 ECManager::iniEC ECManager::readIniFile() {
-    INIReader reader("../ECinfo.ini");
+    INIReader reader("./PKI_info.ini");
 
     iniEC iniData;
 
     if (reader.ParseError() < 0) {
-        std::cout << "[ERR] Can't load 'ECinfo.ini'\n";
+        std::cout << "[ERR] Can't load 'PKI_info.ini'\n";
     }
 
     iniData.eaCertificate = reader.Get("ECinfo", "eaCertificate", "UNKNOWN");
@@ -781,7 +814,7 @@ ECManager::iniEC ECManager::readIniFile() {
     iniData.recipientID = reader.Get("ECinfo", "recipientID", "UNKNOWN");
     iniData.bitmapSspEA = reader.Get("ECinfo", "bitmapEA", "UNKNOWN");
 
-    std::cout << "Config loaded from 'ECinfo.ini': eaCertificate="
+    std::cout << "Config loaded from 'PKI_info.ini': eaCertificate="
               << reader.Get("ECinfo", "eaCertificate", "UNKNOWN") << ", itsID="
               << reader.Get("ECinfo", "itsID", "UNKNOWN") << ", recipientID="
               << reader.Get("ECinfo", "recipientID", "UNKNOWN") << ", bitmapEA="
@@ -790,7 +823,7 @@ ECManager::iniEC ECManager::readIniFile() {
 }
 
 bool ECManager::isFileNotEmpty() {
-    std::string filePath = "responseEC.bin";
+    std::string filePath = "./pkiReqRes/responseEC.bin";
     struct stat fileStat;
     if (stat(filePath.c_str(), &fileStat) != 0) {
         return false; // File does not exist
@@ -802,8 +835,8 @@ void ECManager::createRequest()
 {
   //--decode certificate part--
   iniEC iniData = readIniFile();
-  std::string EAcertificate = iniData.eaCertificate;
-  //std::string EAcertificate = "8003008208347a3b143c94c298198110305f41544f532d312d45412d415f4c3000000000001eb8038586000501018002026f810302010e0101008001018002026f82060201c002ff3f0080832b21e2b719f330f28158d161cf17f047aad41134c13d257c15ec087128bcea9a8080829882b0c6a19899ed83f3e87fef27f3c1a6d01dbb372307574ce5d2ab526dbc8f82618062575412c55fb86829a30626c7406f0c98c6d57cbcccf90d31f122cd17f7abf5855d7bbfd78ce6e4dbd7274ff38c926b25053e35c0dc9553ce4af58fa839822c9e5db0d1c19a4d2310353890f2990b73288a051c762c16fab6ef113a8c46d466";
+  //std::string EAcertificate = iniData.eaCertificate; // TODO understand how get all certificate from ini, get only 185 chars, miss 299 chars
+  std::string EAcertificate = "8003008208347a3b143c94c298198110305f41544f532d312d45412d415f4c3000000000001eb8038586000501018002026f810302010e0101008001018002026f82060201c002ff3f0080832b21e2b719f330f28158d161cf17f047aad41134c13d257c15ec087128bcea9a8080829882b0c6a19899ed83f3e87fef27f3c1a6d01dbb372307574ce5d2ab526dbc8f82618062575412c55fb86829a30626c7406f0c98c6d57cbcccf90d31f122cd17f7abf5855d7bbfd78ce6e4dbd7274ff38c926b25053e35c0dc9553ce4af58fa839822c9e5db0d1c19a4d2310353890f2990b73288a051c762c16fab6ef113a8c46d466";
   std::vector<unsigned char> binaryCert = hexStringToBytes(EAcertificate);
 
   // Compute SHA-256 hash
@@ -937,6 +970,7 @@ void ECManager::createRequest()
   public_key = recoverECKeyPair(ephemeral);
   ephemeral = true;
   EPHpublic_key = recoverECKeyPair(ephemeral);
+
 
   uint64_t m_generationTime = getCurrentTimestamp();
 
@@ -1147,8 +1181,8 @@ void ECManager::createRequest()
 void ECManager::sendPOST() {
     try {
         // File path
-        const std::string filePath = "requestEC.bin";
-        const std::string responseFilePath = "responseEC.bin";
+        const std::string filePath = "./requestEC.bin";
+        const std::string responseFilePath = "./pkiReqRes/responseEC.bin";
 
 
         // Read the file
@@ -1178,9 +1212,6 @@ void ECManager::sendPOST() {
                 {{"Content-Type", "application/x-its-request"}} // Header fields
         );
 
-        // Print the response
-        std::cout << "Server response:\n"
-                  << std::string(response.body.begin(), response.body.end()) << '\n';
 
         // Save the response to a file
         std::ofstream responseFile(responseFilePath, std::ios::binary);
@@ -1199,19 +1230,38 @@ void ECManager::sendPOST() {
 }
 
 
-void ECManager::manageRequest() {
+bool ECManager::manageRequest() {
 
     if (isFileNotEmpty()) {
         EC = ecRes.getECResponse();
+        if (EC.version == 0 && EC.issuer.empty()) {
+            return false;
+        }
+
+        // conversion of duration in years to seconds
         if (EC.tbs.validityPeriod_start <= getCurrentTimestamp32() &&
-            getCurrentTimestamp32() <= EC.tbs.validityPeriod_start + EC.tbs.validityPeriod_duration) {
+            getCurrentTimestamp32() <= EC.tbs.validityPeriod_start + EC.tbs.validityPeriod_duration * 31557600) {
             std::cout << "[INFO] EC is valid" << std::endl;
+            return true;
         } else {
             createRequest();
             sendPOST();
+            EC = ecRes.getECResponse();
+            if (EC.version == 0 && EC.issuer.empty()) {
+                std::cerr << "[ERR] Error - EC response is empty" << std::endl;
+                return false;
+            }
+            return true;
         }
     } else {
+        std::cout << "[INFO] File EC is empty" << std::endl;
         createRequest();
         sendPOST();
+        EC = ecRes.getECResponse();
+        if (EC.version == 0 && EC.issuer.empty()) {
+            std::cerr << "[ERR] Error - EC response is empty" << std::endl;
+            return false;
+        }
+        return true;
     }
 }

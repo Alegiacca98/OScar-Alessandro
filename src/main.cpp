@@ -896,11 +896,23 @@ int main (int argc, char *argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
-    // Manage EC
+    // Manage certificates
     ECManager ecManager;
-    ecManager.manageRequest();
     ATManager atManager(&terminatorFlag);
-    atManager.run();
+    if(enable_security) {
+        if(!ecManager.manageRequest()){
+            std::cerr << "Error in managing the EC request" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+        std::string ecBytes = ecManager.getECBytes();
+        atManager.setECHex(ecBytes);
+        if(!atManager.manageRequest()){
+            std::cerr << "Error in managing the AT request" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+    }
+
+
 
 
 	// Create a new DB object
@@ -1080,7 +1092,11 @@ int main (int argc, char *argv[]) {
 
 	db_ptr->clear();
 
-    atManager.terminate();
+    /* fix when will be used threads
+    if(enable_security) {
+        atManager.terminate();
+    }
+    */
 
 	// Close the socket
 	close(sockfd);

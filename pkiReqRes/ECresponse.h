@@ -115,6 +115,8 @@ public:
 
     GNcertificateDC getECResponse();
 
+    std::string getECBytes() {return m_ecBytesStr;}
+    void setAesKey(std::string aesKey) {m_aesKey = aesKey;}
 
 private:
 
@@ -133,9 +135,15 @@ private:
     void decryptMessage(const std::vector<unsigned char> &encryptedMessage,const std::vector<unsigned char> &nonce, const unsigned char *presharedKey, std::vector<unsigned char> &decryptedMessage, const std::vector<unsigned char> &aesCcmTag);
     std::string doDecryption(std::string ciphertextWithTag_hex, std::string nonce_hex);
     bool signatureVerification(const std::string &tbsData_hex, GNecdsaNistP256 &rValue, const std::string &sValue, GNecdsaNistP256 verifyKeyIndicator);
+    void readIniFile();
+    void saveStringToFile(const std::string& key, const std::string& fileName);
+    std::string retrieveStringFromFile(const std::string& fileName);
 
     unsigned char *dataResponse;
     uint32_t length;
+
+    std::string EAcertificate="";
+    bool err_key;
 
     bool signValidation;
     GNpublicKey public_key;
@@ -143,6 +151,9 @@ private:
     bool ephemeral;
     EC_KEY *m_ecKey ;
     EC_KEY *m_EPHecKey ;
+
+    std::string m_ecBytesStr="";
+    std::string m_aesKey="";
 };
 
 #endif // EC_RESPONSE_H

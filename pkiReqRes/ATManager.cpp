@@ -88,6 +88,35 @@ ATManager::ATManager (std::atomic<bool> *terminatorFlagPtr)
 
 
 
+std::string ATManager::retrieveStringFromFile(const std::string& fileName) {
+    std::ifstream fileIn(fileName, std::ios::binary);  // Open the file in binary mode
+    std::string key;
+    if (fileIn.is_open()) {
+        size_t length;
+        fileIn.read(reinterpret_cast<char*>(&length), sizeof(length));  // Read the length of the string
+        key.resize(length);  // Resize the string
+        fileIn.read(&key[0], length);  // Read the string into the buffer
+        fileIn.close();
+        std::cout << "String retrieved: " << key << std::endl;
+    } else {
+        std::cerr << "Error opening file for reading." << std::endl;
+    }
+    return key;
+}
+
+void ATManager::saveStringToFile(const std::string& key, const std::string& fileName) {
+    std::ofstream fileOut(fileName, std::ios::binary);  // Open the file in binary mode
+    if (fileOut.is_open()) {
+        size_t length = key.size();
+        fileOut.write(reinterpret_cast<const char*>(&length), sizeof(length));  // Write the length of the string
+        fileOut.write(key.c_str(), length);  // Write the string
+        fileOut.close();
+        std::cout << "String saved to binary file." << std::endl;
+    } else {
+        std::cerr << "Error opening file for writing." << std::endl;
+    }
+}
+
 
 // Function to generate a random HMAC key
 std::vector<unsigned char> ATManager::generateHMACKey(size_t length) {
@@ -154,6 +183,14 @@ std::string ATManager::to_hex_string(const unsigned char *data, size_t length)
     oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(data[i]);
   }
   return oss.str();
+}
+
+std::string ATManager::toHexString(const std::string& input) {
+    std::ostringstream oss;
+    for (unsigned char byte : input) {
+        oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+    }
+    return oss.str();
 }
 
 // Function to convert a byte vector to a hexadecimal string
@@ -318,6 +355,9 @@ unsigned char aesKey[AES_KEY_LENGTH];
     }
 
     std::cout << "[INFO] Shared key: " << to_hex_string(aesKey,16) << std::endl;
+    atRes.setAesKey(to_hex_string(aesKey,16));
+    std::string fileName = "pskAT.bin";
+    saveStringToFile(to_hex_string(aesKey,16), fileName);
 
     nonce.resize(NONCE_LENGTH);
     if (RAND_bytes(nonce.data(), NONCE_LENGTH) != 1) {
@@ -544,8 +584,8 @@ ATManager::GNpublicKey ATManager::recoverECKeyPair(bool ephemeral)
   EC_KEY *ec_key = nullptr;
   if (ephemeral)
   {
-    private_key_file = "ephSKEY2.pem";
-    public_key_file = "ephPKEY2.pem";
+    private_key_file = "./pkiReqRes/ephSKEY2.pem";
+    public_key_file = "./pkiReqRes/ephPKEY2.pem";
     ec_key = loadECKeyFromFile(private_key_file, public_key_file);
     if (!ec_key)
     {
@@ -554,8 +594,8 @@ ATManager::GNpublicKey ATManager::recoverECKeyPair(bool ephemeral)
   }
   else
   {
-    private_key_file = "ephSKEY.pem";
-    public_key_file = "ephPKEY.pem";
+    private_key_file = "./pkiReqRes/ephSKEY.pem";
+    public_key_file = "./pkiReqRes/ephPKEY.pem";
     ec_key = loadECKeyFromFile(private_key_file, public_key_file);
     if (!ec_key)
     {
@@ -743,12 +783,12 @@ uint32_t ATManager::getCurrentTimestamp32() {
 }
 
 ATManager::iniAT ATManager::readIniFile() {
-    INIReader reader("../ATinfo.ini");
+    INIReader reader("./PKI_info.ini");
 
     iniAT iniData;
 
     if (reader.ParseError() < 0) {
-        std::cout << "[ERR] Can't load 'ATinfo.ini'\n";
+        std::cout << "[ERR] Can't load 'PKI_info.ini'\n";
     }
 
     iniData.AAcertificate = reader.Get("ATinfo", "AAcertificate", "UNKNOWN");
@@ -757,7 +797,7 @@ ATManager::iniAT ATManager::readIniFile() {
     iniData.bitmapDENM = reader.Get("ATinfo", "bitmapDENM", "UNKNOWN");
     iniData.eaIDstring = reader.Get("ATinfo", "eaIDstring", "UNKNOWN");
 
-    std::cout << "Config loaded from 'ATinfo.ini': recipientAA="
+    std::cout << "Config loaded from 'PKI_info.ini': recipientAA="
               << reader.Get("ATinfo", "recipientAA", "UNKNOWN") << ", AAcertificate="
               << reader.Get("ATinfo", "AAcertificate", "UNKNOWN") << ", bitmapCAM="
               << reader.Get("ATinfo", "bitmapCAM", "UNKNOWN") << ", bitmapDENM="
@@ -768,14 +808,18 @@ ATManager::iniAT ATManager::readIniFile() {
 
 void ATManager::createRequest () {
 
+    if(m_ECHex=="" || m_ECHex.empty()) {
+        std::cerr << "[ERROR] Critical error: m_ECHex is empty. Cannot create any request.\n";
+        m_terminatorFlagPtr = true;
+        return;
+    }
 
     iniAT iniData = readIniFile();
 
-
 //--decode certificate part--
 
-  std::string AAcertificate = iniData.AAcertificate;
-  //std::string AAcertificate = "8003008208347a3b143c94c298198110305f41544f532d312d41412d415f4c3000000000001eb8038586000501018002026f810302013201010080010780012482080301fffc03ff0003800125820a0401ffffff04ff00000080018982060201e002ff1f80018a82060201c002ff3f80018b820e0601fffffffff806ff000000000780018c820a0402ffffe004ff00001f00018d008082a6703bf2d5dd609df2ab801f569d006aa415e02bef021f57f328a8ed4809b8aa808082bfd435934f1bacafbacb0e861c080aa6b3a585d483d2d7f684ad3df21b091dbe826180635a699d9ec110c229c4efb1a819c66d531d189cc44293ce46f9deb8e745e6def142a7bda97d7f5b2703b75d516ae1bd684cf079e3d048101f9ab1f45fa535e683267c02453ea5fb21b0e04060d84d218cd2f3253dfbbc7aafb00df21b8e40ef";
+  // std::string AAcertificate = iniData.AAcertificate; // TODO understand how get all certificate from ini, get only 185 chars, miss 299 chars
+  std::string AAcertificate = "8003008208347a3b143c94c298198110305f41544f532d312d41412d415f4c3000000000001eb8038586000501018002026f810302013201010080010780012482080301fffc03ff0003800125820a0401ffffff04ff00000080018982060201e002ff1f80018a82060201c002ff3f80018b820e0601fffffffff806ff000000000780018c820a0402ffffe004ff00001f00018d008082a6703bf2d5dd609df2ab801f569d006aa415e02bef021f57f328a8ed4809b8aa808082bfd435934f1bacafbacb0e861c080aa6b3a585d483d2d7f684ad3df21b091dbe826180635a699d9ec110c229c4efb1a819c66d531d189cc44293ce46f9deb8e745e6def142a7bda97d7f5b2703b75d516ae1bd684cf079e3d048101f9ab1f45fa535e683267c02453ea5fb21b0e04060d84d218cd2f3253dfbbc7aafb00df21b8e40ef";
   std::vector<unsigned char> binaryCert = hexStringToBytes(AAcertificate);
 
   // Compute SHA-256 hash
@@ -1044,9 +1088,20 @@ void ATManager::createRequest () {
     asn1cpp::setField (tbs3->headerInfo.generationTime, m_generationTime); 
     asn1cpp::setField (signData3->tbsData, tbs3);
     std::string tbs_hex = asn1cpp::oer::encode (tbs3);
-    std::string ec_hex = "80030080D41845A1F71C356A10812462316663616238302D326639642D346232662D613262372D356166376563313337363938000000000027440C72840F9D01018002026F81030201C08080838AF5536F714A3CD32443786E92A4A1EDCC7F9A53877D1CAABF1CFDF6DDC1C05D8080099E0B0415A540887D5267DF0855AF4E29830EACCAEDBAF91C884A1F42ED8F1FD90F2A782D6FFB80DB08509F6DC1ED8538E17D23CF800478D805D7D124E08F30";
+    // std::string ec_hex = "80030080D41845A1F71C356A10812462316663616238302D326639642D346232662D613262372D356166376563313337363938000000000027440C72840F9D01018002026F81030201C08080838AF5536F714A3CD32443786E92A4A1EDCC7F9A53877D1CAABF1CFDF6DDC1C05D8080099E0B0415A540887D5267DF0855AF4E29830EACCAEDBAF91C884A1F42ED8F1FD90F2A782D6FFB80DB08509F6DC1ED8538E17D23CF800478D805D7D124E08F30";
+    std::string ec_hex = m_ECHex;
     GNsignMaterial sign_material = signatureCreation (tbs_hex, ephemeral, ec_hex);
-    std::string ec_h8 = "92EFF58ABCA91FC4";
+    // generate the digest of the certificate, so calculate the hash of certificate and take only the last 8 bytes
+    std::vector<unsigned char> digest_bytes = hexStringToBytes (ec_hex);
+    unsigned char digest_hash[SHA256_DIGEST_LENGTH];
+    computeSHA256 (digest_bytes, digest_hash);
+    std::string ec_h8 = "";
+    for (int i = 24; i < 32; i++)
+    {
+        std::stringstream ss;
+        ss << std::hex << std::setw(2) << std::setfill('0') << (int) digest_hash[i];
+        ec_h8 += ss.str();
+    }
     std::vector<unsigned char> ec_bytes = hexStringToBytes (ec_h8);
     std::string m_digest(ec_bytes.begin(), ec_bytes.end());
     asn1cpp::setField (signData3->signer.present, SignerIdentifier_PR_digest);
@@ -1169,7 +1224,7 @@ encode_result = asn1cpp::oer::encode(ieeeData2);
 }
 
 bool ATManager::isFileNotEmpty() {
-    std::string filePath = "responseAT.bin";
+    std::string filePath = "./pkiReqRes/responseAT.bin";
     struct stat fileStat;
     if (stat(filePath.c_str(), &fileStat) != 0) {
         return false; // File does not exist
@@ -1180,8 +1235,8 @@ bool ATManager::isFileNotEmpty() {
 void ATManager::sendPOST() {
         try {
             // File path
-            const std::string filePath = "requestAT.bin";
-            const std::string responseFilePath = "responseAT.bin";
+            const std::string filePath = "./requestAA.bin";
+            const std::string responseFilePath = "./pkiReqRes/responseAT.bin";
 
 
             // Read the file
@@ -1211,9 +1266,6 @@ void ATManager::sendPOST() {
                     {{"Content-Type", "application/x-its-request"}} // Header fields
             );
 
-            // Print the response
-            std::cout << "Server response:\n"
-                      << std::string(response.body.begin(), response.body.end()) << '\n';
 
             // Save the response to a file
             std::ofstream responseFile(responseFilePath, std::ios::binary);
@@ -1231,13 +1283,62 @@ void ATManager::sendPOST() {
         }
 }
 
+void ATManager::updateAT() {
 
+    m_auhtTicket.m_version = atResCert.version;
+    m_auhtTicket.m_type = atResCert.type;
+
+    m_auhtTicket.m_issuer = toHexString(atResCert.issuer);
+
+    m_auhtTicket.m_id_none = atResCert.tbs.id;
+    m_auhtTicket.m_cracaId = toHexString(atResCert.tbs.cracaId);
+    m_auhtTicket.m_crlSeries = atResCert.tbs.crlSeries;
+    m_auhtTicket.m_validityPeriod_start = atResCert.tbs.validityPeriod_start;
+    m_auhtTicket.m_validityPeriod_duration = atResCert.tbs.validityPeriod_duration;
+    m_auhtTicket.m_psid=atResCert.tbs.appPermissions[0].psid;
+    m_auhtTicket.m_bitmapSsp = toHexString(atResCert.tbs.appPermissions[0].bitmapSsp);
+    m_auhtTicket.m_psid2 = atResCert.tbs.appPermissions[1].psid;
+    m_auhtTicket.m_bitmapSsp2 = toHexString(atResCert.tbs.appPermissions[1].bitmapSsp);
+    m_auhtTicket.presentVerKey = atResCert.tbs.verifyKeyIndicator.presentVerKey;
+    switch (m_auhtTicket.presentVerKey) {
+        case 1:
+            m_auhtTicket.verifykeyindicator = toHexString(atResCert.tbs.verifyKeyIndicator.p256_x_only);
+           break;
+        case 3:
+            m_auhtTicket.verifykeyindicator = toHexString(atResCert.tbs.verifyKeyIndicator.p256_compressed_y_0);
+            break;
+        case 4:
+            m_auhtTicket.verifykeyindicator = toHexString(atResCert.tbs.verifyKeyIndicator.p256_compressed_y_1);
+            break;
+        default:
+            break;
+    }
+    m_auhtTicket.presentSignature = atResCert.rSig.presentRSig;
+    switch (m_auhtTicket.presentSignature) {
+        case 1:
+            m_auhtTicket.m_rSig = toHexString(atResCert.rSig.p256_x_only);
+            break;
+        case 3:
+            m_auhtTicket.m_rSig = toHexString(atResCert.rSig.p256_compressed_y_0);
+            break;
+        case 4:
+            m_auhtTicket.m_rSig = toHexString(atResCert.rSig.p256_compressed_y_1);
+            break;
+        default:
+            break;
+    }
+    m_auhtTicket.m_Ssig = toHexString(atResCert.signature_sSig);
+    std::cout << "[INFO] AT updated" << std::endl;
+
+}
+
+/*
 void ATManager::updateAT() {
     AT tmp;
     tmp.m_version = atResCert.version;
     tmp.m_type = atResCert.type;
     std::copy(atResCert.issuer.begin(), atResCert.issuer.end(), tmp.m_issuer);
-    std::copy(atResCert.tbs.name.begin(), atResCert.tbs.name.end(), tmp.m_id_name);
+    //std::copy(atResCert.tbs.name.begin(), atResCert.tbs.name.end(), tmp.m_id_name);
     tmp.m_id_none = atResCert.tbs.id;
     std::copy(atResCert.tbs.cracaId.begin(), atResCert.tbs.cracaId.end(), tmp.m_cracaId);
     tmp.m_crlSeries = atResCert.tbs.crlSeries;
@@ -1277,20 +1378,107 @@ void ATManager::updateAT() {
     }
     std::copy(atResCert.signature_sSig.begin(), atResCert.signature_sSig.end(), tmp.m_Ssig);
     m_auhtTicket.store(tmp);
+
+    std::cout << "[INFO] AT updated" << std::endl;
+}
+ */
+
+bool ATManager::manageRequest() {
+    m_terminatorFlagPtr=false;
+    if (isFileNotEmpty()) {
+
+        std::cout << "[INFO] File AT is not empty" << std::endl;
+        atResCert = atRes.getATResponse();
+        if (atResCert.version == 0 && atResCert.issuer.empty()){
+            m_terminatorFlagPtr=true;
+            return false;
+        }
+
+        if (atResCert.tbs.validityPeriod_start <= getCurrentTimestamp32() && getCurrentTimestamp32()
+        <= atResCert.tbs.validityPeriod_start + atResCert.tbs.validityPeriod_duration * 3600) {
+
+            if (atResCert.tbs.validityPeriod_start + atResCert.tbs.validityPeriod_duration * 3600 - getCurrentTimestamp32() < 1800) {
+                std::cout << "[INFO] AT is valid but less than 30 minutes" << std::endl;
+                createRequest();
+                if(m_terminatorFlagPtr){
+                    return false;
+                }
+                sendPOST();
+                atResCert = atRes.getATResponse();
+                if (atResCert.version == 0 && atResCert.issuer.empty()){
+                    m_terminatorFlagPtr=true;
+                    return false;
+                }
+                updateAT();
+                return true;
+            } else {  // if the AT is still valid, wait for 15 minutes
+                std::cout << "[INFO] AT is still valid" << std::endl;
+                //if all is valid, update the struct m_authTicket with the value of atResCert
+                updateAT();
+                return true;
+            }
+
+        } else {
+            std::cout << "[INFO] AT is not valid" << std::endl;
+            createRequest();
+            if(m_terminatorFlagPtr){
+                std::cout << "[INFO] Terminator flag is set" << std::endl;
+                return false;
+            }
+            sendPOST();
+            atResCert = atRes.getATResponse();
+            if (atResCert.version == 0 && atResCert.issuer.empty()){
+                m_terminatorFlagPtr=true;
+                return false;
+            }
+            updateAT();
+            return true;
+        }
+    } else {
+        std::cout << "[INFO] File AT is empty" << std::endl;
+        createRequest();
+        if(m_terminatorFlagPtr){
+            return false;
+        }
+        sendPOST();
+        atResCert = atRes.getATResponse();
+        if (atResCert.version == 0 && atResCert.issuer.empty()){
+            m_terminatorFlagPtr=true;
+            return false;
+        }
+        updateAT();
+        return true;
+    }
 }
 
+//TODO part to use thread and check periodically the AT
+/* Fix when will be used threads
+
 void ATManager::atCheckThread(){
-    while(m_terminatorFlagPtr!=true){
+    while(!m_terminatorFlagPtr){
+        std::cout << "[INFO] Checking AT" << std::endl;
     if (isFileNotEmpty()) {  // check if the file is empty or not exist
+        std::cout << "[INFO] File AT is not empty" << std::endl;
         atResCert = atRes.getATResponse();    // if not empty, get the AT response
+        if (atResCert.version == 0 && atResCert.issuer.empty()){
+            m_terminatorFlagPtr=true;
+            return;
+        }
         if (atResCert.tbs.validityPeriod_start <= getCurrentTimestamp32() && getCurrentTimestamp32()
                 <= atResCert.tbs.validityPeriod_start + atResCert.tbs.validityPeriod_duration) { // check if the AT is valid
             std::cout << "[INFO] AT is valid" << std::endl;
             // check the threshold of the AT validity, if it is less than 30 minutes, send a new request
             if (atResCert.tbs.validityPeriod_start + atResCert.tbs.validityPeriod_duration - getCurrentTimestamp32() < 1800) {
                 createRequest();
+                if(m_terminatorFlagPtr){
+                    return;
+                }
                 sendPOST();
                 atResCert = atRes.getATResponse();
+                if (atResCert.version == 0 && atResCert.issuer.empty()){
+                    m_terminatorFlagPtr=true;
+                    return;
+                }
                 updateAT();
             } else {  // if the AT is still valid, wait for 15 minutes
                 std::cout << "[INFO] AT is still valid" << std::endl;
@@ -1298,17 +1486,34 @@ void ATManager::atCheckThread(){
                 updateAT();
             }
         } else { // if the AT is not valid, send a new request
+            std::cout << "[INFO] AT is not valid" << std::endl;
             createRequest();
+            if(m_terminatorFlagPtr){
+                return;
+            }
             sendPOST();
             atResCert = atRes.getATResponse();
+            if (atResCert.version == 0 && atResCert.issuer.empty()){
+                m_terminatorFlagPtr=true;
+                return;
+            }
             updateAT();
         }
     } else { // if the file is empty, send a new request
         createRequest();
+        if(m_terminatorFlagPtr){
+            return;
+        }
         sendPOST();
         atResCert = atRes.getATResponse();
+        if (atResCert.version == 0 && atResCert.issuer.empty()){
+            m_terminatorFlagPtr=true;
+            return;
+        }
         updateAT();
     }
+    // TODO exit from the function and terminate the thread if terminate flag is set
+    std::cout << "[INFO] Waiting for 15 minutes" << std::endl;
     std::this_thread::sleep_for(std::chrono::minutes(15));
     }
 }
@@ -1320,11 +1525,13 @@ void ATManager::terminate(){
     }
 }
 
+
 //run thread
 void ATManager::run(){
     m_checkThread = new std::thread(&ATManager::atCheckThread, this);
 }
 
+*/
 
 
 

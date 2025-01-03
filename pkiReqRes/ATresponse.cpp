@@ -29,6 +29,8 @@
 #include <openssl/hmac.h>
 #include <openssl/kdf.h>
 #include <ATResponse.h>
+#include <INIReader.h>
+#include <fstream>
 
 extern "C"
 {
@@ -59,6 +61,35 @@ ATResponse::ATResponse ()
 
 }
 
+
+std::string ATResponse::retrieveStringFromFile(const std::string& fileName) {
+    std::ifstream fileIn(fileName, std::ios::binary);  // Open the file in binary mode
+    std::string key;
+    if (fileIn.is_open()) {
+        size_t length;
+        fileIn.read(reinterpret_cast<char*>(&length), sizeof(length));  // Read the length of the string
+        key.resize(length);  // Resize the string
+        fileIn.read(&key[0], length);  // Read the string into the buffer
+        fileIn.close();
+        std::cout << "String retrieved: " << key << std::endl;
+    } else {
+        std::cerr << "Error opening file for reading." << std::endl;
+    }
+    return key;
+}
+
+void ATResponse::saveStringToFile(const std::string& key, const std::string& fileName) {
+    std::ofstream fileOut(fileName, std::ios::binary);  // Open the file in binary mode
+    if (fileOut.is_open()) {
+        size_t length = key.size();
+        fileOut.write(reinterpret_cast<const char*>(&length), sizeof(length));  // Write the length of the string
+        fileOut.write(key.c_str(), length);  // Write the string
+        fileOut.close();
+        std::cout << "String saved to binary file." << std::endl;
+    } else {
+        std::cerr << "Error opening file for writing." << std::endl;
+    }
+}
 
 // Function to handle errors
 void ATResponse::handleErrors()
@@ -242,17 +273,17 @@ std::vector<unsigned char> ATResponse::concatenateHashes(const unsigned char has
 void ATResponse::decryptMessage(
     const std::vector<unsigned char> &encryptedMessage,
     const std::vector<unsigned char> &nonce,
-    const unsigned char *presharedKey, // Chiave simmetrica derivata da HashedId8
+    const unsigned char *presharedKey,
     std::vector<unsigned char> &decryptedMessage,
     const std::vector<unsigned char> &aesCcmTag)
 {
     unsigned char aesKey[AES_KEY_LENGTH];
-    std::memcpy(aesKey, presharedKey, AES_KEY_LENGTH); // Copia la chiave pre-condivisa
+    std::memcpy(aesKey, presharedKey, AES_KEY_LENGTH);
 
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (!ctx) handleErrors();
 
-    // Inizializza il contesto AES-CCM per la decryption
+
     if (EVP_DecryptInit_ex(ctx, EVP_aes_128_ccm(), nullptr, nullptr, nullptr) != 1) handleErrors();
     if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_IVLEN, NONCE_LENGTH, nullptr) != 1) handleErrors();
     if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_TAG, AES_CCM_TAG_LENGTH, (void*)aesCcmTag.data()) != 1) handleErrors();
@@ -262,13 +293,12 @@ void ATResponse::decryptMessage(
     decryptedMessage.resize(encryptedMessage.size());
     int len;
     if (EVP_DecryptUpdate(ctx, decryptedMessage.data(), &len, encryptedMessage.data(), encryptedMessage.size()) != 1) {
-        // Se la decryption fallisce, restituisce errore
+
         handleErrors();
     }
 
     int decryptedLen = len;
     if (EVP_DecryptFinal_ex(ctx, decryptedMessage.data() + len, &len) != 1) {
-        // Se la verifica del tag fallisce, restituisce errore
         handleErrors();
     }
     decryptedLen += len;
@@ -286,8 +316,12 @@ std::string ATResponse::doDecryption(std::string ciphertextWithTag_hex, std::str
   std::vector<unsigned char> ciphertext(ciphertextWithTag.begin(), ciphertextWithTag.end() - 16);
   std::vector<unsigned char> aesCcmTag(ciphertextWithTag.end() - 16, ciphertextWithTag.end());
   std::vector<unsigned char> nonce(nonce_hex.begin(), nonce_hex.end());
-  std::string aes_key = "bb9403f31729025d96fe4329b6e75c79";
-  std::vector<unsigned char> psk = hexStringToBytes(aes_key);
+  if( m_aesKey == "")
+  {
+      m_aesKey = retrieveStringFromFile("pskAT.bin");
+    //m_aesKey = "513d70d3a95d116d110317532b611ee5"; // TODO understand how put m_aesKey here, when you close the program, the value is lost
+  }
+  std::vector<unsigned char> psk = hexStringToBytes(m_aesKey);
 
   std::vector<unsigned char> decryptedMessage;
 
@@ -365,6 +399,23 @@ EC_KEY* ATResponse::loadECKeyFromFile(const std::string &private_key_file, const
 }
 
 
+void ATResponse::readIniFile() {
+    INIReader reader("./PKI_info.ini");
+
+
+
+    if (reader.ParseError() < 0) {
+        std::cout << "[ERR] Can't load 'PKI_info.ini'\n";
+    }
+
+    AAcertificate = reader.Get("ATinfo", "AAcertificate", "UNKNOWN");
+
+    std::cout << "Config loaded from 'PKI_info.ini':  AAcertificate="
+              << reader.Get("ATinfo", "AAcertificate", "UNKNOWN") <<  std::endl;
+
+}
+
+
 // Function to load an EC_KEY object from a RFC-5480 formatted private key
 EC_KEY* ATResponse::loadECKeyFromRFC5480(const std::string &private_key_rfc, const std::string &public_key_rfc)
 {
@@ -438,8 +489,8 @@ ATResponse::GNpublicKey ATResponse::recoverECKeyPair(bool ephemeral)
   EC_KEY *ec_key = nullptr;
   if (ephemeral)
   {
-    private_key_file = "ephSKEY.pem";
-    public_key_file = "ephPKEY.pem";
+    private_key_file = "./pkiReqRes/ephSKEY.pem";
+    public_key_file = "./pkiReqRes/ephPKEY.pem";
     ec_key = loadECKeyFromFile(private_key_file, public_key_file);
     if (!ec_key)
     {
@@ -634,10 +685,10 @@ bool ATResponse::signatureVerification(const std::string &tbsData_hex, GNecdsaNi
 ATResponse::GNcertificateDC ATResponse::getATResponse()
 {
 
-  
-//--decode certificate part--
-
-  std::string AAcertificate = "8003008208347a3b143c94c298198110305f41544f532d312d41412d415f4c3000000000001eb8038586000501018002026f810302013201010080010780012482080301fffc03ff0003800125820a0401ffffff04ff00000080018982060201e002ff1f80018a82060201c002ff3f80018b820e0601fffffffff806ff000000000780018c820a0402ffffe004ff00001f00018d008082a6703bf2d5dd609df2ab801f569d006aa415e02bef021f57f328a8ed4809b8aa808082bfd435934f1bacafbacb0e861c080aa6b3a585d483d2d7f684ad3df21b091dbe826180635a699d9ec110c229c4efb1a819c66d531d189cc44293ce46f9deb8e745e6def142a7bda97d7f5b2703b75d516ae1bd684cf079e3d048101f9ab1f45fa535e683267c02453ea5fb21b0e04060d84d218cd2f3253dfbbc7aafb00df21b8e40ef";
+    readIniFile();
+    //--decode certificate part--
+    // TODO understand how get all certificate from ini, get only 185 chars, miss 299 chars
+  AAcertificate = "8003008208347a3b143c94c298198110305f41544f532d312d41412d415f4c3000000000001eb8038586000501018002026f810302013201010080010780012482080301fffc03ff0003800125820a0401ffffff04ff00000080018982060201e002ff1f80018a82060201c002ff3f80018b820e0601fffffffff806ff000000000780018c820a0402ffffe004ff00001f00018d008082a6703bf2d5dd609df2ab801f569d006aa415e02bef021f57f328a8ed4809b8aa808082bfd435934f1bacafbacb0e861c080aa6b3a585d483d2d7f684ad3df21b091dbe826180635a699d9ec110c229c4efb1a819c66d531d189cc44293ce46f9deb8e745e6def142a7bda97d7f5b2703b75d516ae1bd684cf079e3d048101f9ab1f45fa535e683267c02453ea5fb21b0e04060d84d218cd2f3253dfbbc7aafb00df21b8e40ef";
   std::vector<unsigned char> binaryCert = hexStringToBytes(AAcertificate);
 
   // Compute SHA-256 hash
@@ -769,7 +820,7 @@ ATResponse::GNcertificateDC ATResponse::getATResponse()
 
   
 
-  if (readFileContent("responseAT.bin", &dataResponse, &length) != 0) {
+  if (readFileContent("./pkiReqRes/responseAT.bin", &dataResponse, &length) != 0) {
     std::cout << "[ERR] Error reading file" << std::endl;
   }
 
@@ -817,6 +868,11 @@ ATResponse::GNcertificateDC ATResponse::getATResponse()
   }
 
   encPacket.content.unsecuredData = doDecryption(encPacket.content.encrData.ciphertext,encPacket.content.encrData.nonce);
+ if (encPacket.content.unsecuredData.empty())
+  {
+    std::cerr << "Error decrypting the message" << std::endl;
+    return {};
+  }
 
   asn1cpp::Seq<Ieee1609Dot2Data> signedDataDecoded;
   signedDataDecoded = asn1cpp::oer::decode(encPacket.content.unsecuredData, Ieee1609Dot2Data);
@@ -885,7 +941,6 @@ ATResponse::GNcertificateDC ATResponse::getATResponse()
 
   if (signValidation)
   {
-    
     asn1cpp::Seq<EtsiTs102941MessagesItss_EtsiTs102941Data> etsiData;
     etsiData = asn1cpp::oer::decode(sPack.content.signData.tbsdata.unsecuredData, EtsiTs102941MessagesItss_EtsiTs102941Data);
     int etsiVersion = asn1cpp::getField(etsiData->version, int);
@@ -896,7 +951,6 @@ ATResponse::GNcertificateDC ATResponse::getATResponse()
       auto res = asn1cpp::getSeq(etsiContent->choice.authorizationResponse, InnerAtResponse, &getValue_ok);
 
       response ATres;
-
       ATres.requestHash = asn1cpp::getField(res->requestHash, std::string);
       ATres.response_code = asn1cpp::getField(res->responseCode, long);
       bool getValue_ok3;
@@ -1009,6 +1063,6 @@ ATResponse::GNcertificateDC ATResponse::getATResponse()
       return ATres.certificate;
     }
   } else std::cout << "[ERR] Error - signature not valid" << std::endl;
-
+  return {};
   // AT: 80030080a8aa9cab63b783ee10830000000000274417888400a8010280012481040301fffc80012581050401ffffff8080829950114a540f25fdb8a2c2b238f5e6a39770b1f187b8ee7df8a3e249ec7a49cb8080b724e7b16972ec3f3d57bdf6a69522abcda2042a3109e5839514bf33caff48348a327419795b22280ecb9f643e0543ba54236494ffbd8aa60e8944762dd15c99
 }

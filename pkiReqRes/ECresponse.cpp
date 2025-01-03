@@ -30,6 +30,8 @@
 #include <openssl/hmac.h>
 #include <openssl/kdf.h>
 #include <ECresponse.h>
+#include <INIReader.h>
+#include <fstream>
 
 extern "C"
 {
@@ -58,6 +60,35 @@ ECResponse::ECResponse ()
     EC_KEY *m_ecKey = nullptr;
     EC_KEY *m_EPHecKey = nullptr;
 
+}
+
+std::string ECResponse::retrieveStringFromFile(const std::string& fileName) {
+    std::ifstream fileIn(fileName, std::ios::binary);  // Open the file in binary mode
+    std::string key;
+    if (fileIn.is_open()) {
+        size_t length;
+        fileIn.read(reinterpret_cast<char*>(&length), sizeof(length));  // Read the length of the string
+        key.resize(length);  // Resize the string
+        fileIn.read(&key[0], length);  // Read the string into the buffer
+        fileIn.close();
+        std::cout << "String retrieved: " << key << std::endl;
+    } else {
+        std::cerr << "Error opening file for reading." << std::endl;
+    }
+    return key;
+}
+
+void ECResponse::saveStringToFile(const std::string& key, const std::string& fileName) {
+    std::ofstream fileOut(fileName, std::ios::binary);  // Open the file in binary mode
+    if (fileOut.is_open()) {
+        size_t length = key.size();
+        fileOut.write(reinterpret_cast<const char*>(&length), sizeof(length));  // Write the length of the string
+        fileOut.write(key.c_str(), length);  // Write the string
+        fileOut.close();
+        std::cout << "String saved to binary file." << std::endl;
+    } else {
+        std::cerr << "Error opening file for writing." << std::endl;
+    }
 }
 
 
@@ -244,17 +275,15 @@ std::vector<unsigned char> ECResponse::concatenateHashes(const unsigned char has
 void ECResponse::decryptMessage(
     const std::vector<unsigned char> &encryptedMessage,
     const std::vector<unsigned char> &nonce,
-    const unsigned char *presharedKey, // Chiave simmetrica derivata da HashedId8
+    const unsigned char *presharedKey,
     std::vector<unsigned char> &decryptedMessage,
     const std::vector<unsigned char> &aesCcmTag)
 {
     unsigned char aesKey[AES_KEY_LENGTH];
-    std::memcpy(aesKey, presharedKey, AES_KEY_LENGTH); // Copia la chiave pre-condivisa
-
+    std::memcpy(aesKey, presharedKey, AES_KEY_LENGTH);
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (!ctx) handleErrors();
 
-    // Inizializza il contesto AES-CCM per la decryption
     if (EVP_DecryptInit_ex(ctx, EVP_aes_128_ccm(), nullptr, nullptr, nullptr) != 1) handleErrors();
     if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_IVLEN, NONCE_LENGTH, nullptr) != 1) handleErrors();
     if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_TAG, AES_CCM_TAG_LENGTH, (void*)aesCcmTag.data()) != 1) handleErrors();
@@ -264,13 +293,12 @@ void ECResponse::decryptMessage(
     decryptedMessage.resize(encryptedMessage.size());
     int len;
     if (EVP_DecryptUpdate(ctx, decryptedMessage.data(), &len, encryptedMessage.data(), encryptedMessage.size()) != 1) {
-        // Se la decryption fallisce, restituisce errore
+
         handleErrors();
     }
 
     int decryptedLen = len;
     if (EVP_DecryptFinal_ex(ctx, decryptedMessage.data() + len, &len) != 1) {
-        // Se la verifica del tag fallisce, restituisce errore
         handleErrors();
     }
     decryptedLen += len;
@@ -282,14 +310,19 @@ void ECResponse::decryptMessage(
 // Function to decrypt a message using AES-CCM
 std::string ECResponse::doDecryption(std::string ciphertextWithTag_hex, std::string nonce_hex)
 {
-  
+
   std::vector<unsigned char> ciphertextWithTag(ciphertextWithTag_hex.begin(), ciphertextWithTag_hex.end());
 
   std::vector<unsigned char> ciphertext(ciphertextWithTag.begin(), ciphertextWithTag.end() - 16);
   std::vector<unsigned char> aesCcmTag(ciphertextWithTag.end() - 16, ciphertextWithTag.end());
   std::vector<unsigned char> nonce(nonce_hex.begin(), nonce_hex.end());
-  std::string aes_key = "B9D4073BC612B281A99D05CBB61D8F66";
-  std::vector<unsigned char> psk = hexStringToBytes(aes_key);
+  if (m_aesKey == "")
+  { //4f6bee573da7a4a620176fef4ba119a6
+      m_aesKey = retrieveStringFromFile("pskEC.bin");
+    //m_aesKey = "42042b355ead4e0e4a2f206c4e53b034"; // TODO understand how put m_aesKey here, when you close the program, the value is lost
+  }
+
+  std::vector<unsigned char> psk = hexStringToBytes(m_aesKey);
 
   std::vector<unsigned char> decryptedMessage;
 
@@ -439,8 +472,8 @@ ECResponse::GNpublicKey ECResponse::recoverECKeyPair(bool ephemeral)
   EC_KEY *ec_key = nullptr;
   if (ephemeral)
   {
-    private_key_file = "ephSKEY.pem";
-    public_key_file = "ephPKEY.pem";
+    private_key_file = "./pkiReqRes/ephSKEY.pem";
+    public_key_file = "./pkiReqRes/ephPKEY.pem";
     ec_key = loadECKeyFromFile(private_key_file, public_key_file);
     if (!ec_key)
     {
@@ -632,13 +665,30 @@ bool ECResponse::signatureVerification(const std::string &tbsData_hex, GNecdsaNi
     return verify_status;
 }
 
+void ECResponse::readIniFile() {
+    INIReader reader("./PKI_info.ini");
+
+
+
+    if (reader.ParseError() < 0) {
+        std::cout << "[ERR] Can't load 'PKI_info.ini'\n";
+    }
+
+    EAcertificate = reader.Get("ECinfo", "EAcertificate", "UNKNOWN");
+
+    std::cout << "Config loaded from 'PKI_info.ini':  EAcertificate="
+              << reader.Get("ECinfo", "EAcertificate", "UNKNOWN") <<  std::endl;
+
+}
 
 ECResponse::GNcertificateDC ECResponse::getECResponse()
 {
 
-  //--decode certificate part--
+    readIniFile();
 
-  std::string EAcertificate = "8003008208347a3b143c94c298198110305f41544f532d312d45412d415f4c3000000000001eb8038586000501018002026f810302010e0101008001018002026f82060201c002ff3f0080832b21e2b719f330f28158d161cf17f047aad41134c13d257c15ec087128bcea9a8080829882b0c6a19899ed83f3e87fef27f3c1a6d01dbb372307574ce5d2ab526dbc8f82618062575412c55fb86829a30626c7406f0c98c6d57cbcccf90d31f122cd17f7abf5855d7bbfd78ce6e4dbd7274ff38c926b25053e35c0dc9553ce4af58fa839822c9e5db0d1c19a4d2310353890f2990b73288a051c762c16fab6ef113a8c46d466";
+  //--decode certificate part--
+  // TODO understand how get all certificate from ini, get only 185 chars, miss 299 chars
+  EAcertificate = "8003008208347a3b143c94c298198110305f41544f532d312d45412d415f4c3000000000001eb8038586000501018002026f810302010e0101008001018002026f82060201c002ff3f0080832b21e2b719f330f28158d161cf17f047aad41134c13d257c15ec087128bcea9a8080829882b0c6a19899ed83f3e87fef27f3c1a6d01dbb372307574ce5d2ab526dbc8f82618062575412c55fb86829a30626c7406f0c98c6d57cbcccf90d31f122cd17f7abf5855d7bbfd78ce6e4dbd7274ff38c926b25053e35c0dc9553ce4af58fa839822c9e5db0d1c19a4d2310353890f2990b73288a051c762c16fab6ef113a8c46d466";
   std::vector<unsigned char> binaryCert = hexStringToBytes(EAcertificate);
 
   // Compute SHA-256 hash
@@ -665,8 +715,8 @@ ECResponse::GNcertificateDC ECResponse::getECResponse()
   newCert.tbs.cracaId = asn1cpp::getField(certData_decoded->toBeSigned.cracaId, std::string);
   newCert.tbs.crlSeries = asn1cpp::getField(certData_decoded->toBeSigned.crlSeries, uint16_t);
   newCert.tbs.validityPeriod_start = asn1cpp::getField(certData_decoded->toBeSigned.validityPeriod.start, uint32_t);
-  if (asn1cpp::getField(certData_decoded->toBeSigned.validityPeriod.duration.present, Duration_PR) == Duration_PR_hours)
-    newCert.tbs.validityPeriod_duration = asn1cpp::getField(certData_decoded->toBeSigned.validityPeriod.duration.choice.hours, long);
+  if (asn1cpp::getField(certData_decoded->toBeSigned.validityPeriod.duration.present, Duration_PR) == Duration_PR_years)
+        newCert.tbs.validityPeriod_duration = asn1cpp::getField(certData_decoded->toBeSigned.validityPeriod.duration.choice.years, long);
   int size2 = asn1cpp::sequenceof::getSize(certData_decoded->toBeSigned.appPermissions);
   for (int j = 0; j < size2; j++)
   {
@@ -768,8 +818,7 @@ ECResponse::GNcertificateDC ECResponse::getECResponse()
 
   //----------------------
 
-
-  if (readFileContent("responseEC.bin", &dataResponse, &length) != 0) {
+  if (readFileContent("./pkiReqRes/responseEC.bin", &dataResponse, &length) != 0) {
     std::cout << "[ERR] Error reading the file" << std::endl;
   }
 
@@ -817,7 +866,11 @@ ECResponse::GNcertificateDC ECResponse::getECResponse()
   }
 
   encPacket.content.unsecuredData = doDecryption(encPacket.content.encrData.ciphertext,encPacket.content.encrData.nonce);
-
+  if(encPacket.content.unsecuredData.empty())
+  {
+    std::cout << "[ERR] Error decrypting the message" << std::endl;
+      return {};
+  }
   asn1cpp::Seq<Ieee1609Dot2Data> signedDataDecoded;
   signedDataDecoded = asn1cpp::oer::decode(encPacket.content.unsecuredData, Ieee1609Dot2Data);
 
@@ -996,9 +1049,11 @@ ECResponse::GNcertificateDC ECResponse::getECResponse()
       std::string ec_hex = asn1cpp::oer::encode(certDecoded);
       std::vector<unsigned char> ec_bytes(ec_hex.begin(), ec_hex.end());
       std::cout << "[INFO] EC: " << to_hex_string(ec_bytes) << std::endl;
+      m_ecBytesStr = to_hex_string(ec_bytes);
       return ECres.certificate;
     }
   } else std::cout << "[ERR] Error - signature not valid" << std::endl;
+    return {};
 
   //EC: 80030080d41845a1f71c356a00812437653763303361662d666635362d343861322d393131372d3138666462316161306639330000000000273fdaa3840fe9808083a30628745d061210f9f1e2a49ebfadc798b1b2e663958304846b23a75a0d78a48080a8d9d7f3b28abc7ef6901083270ebef8975be1940582aea9e3f45a27efd5c5428fba74655888ca8644c48d0b7b47699a78904d9c2a315855929c3829b890bdad
 

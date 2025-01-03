@@ -44,8 +44,9 @@ Security::Security ()
     m_ecKey = nullptr;
     m_protocolVersion = 3;
     m_hashId = HashAlgorithm_sha256;
-    m_generationTime = 629405121939330;
+    m_generationTime = 0;
     m_digest = "";
+    m_psid = 36;
 }
 
 void Security::mapCleaner ()
@@ -261,8 +262,8 @@ void Security::recoverECKeyPair()
 {
     std::string private_key_file = "";
     std::string public_key_file = "";
-    private_key_file = "../../pkiReq/Res/ephSKEY2.pem";
-    public_key_file = "../../pkiReq/Res/ephPKEY2.pem";
+    private_key_file = "./pkiReqRes/ephSKEY2.pem";
+    public_key_file = "./pkiReqRes/ephPKEY2.pem";
     EC_KEY *ec_key = nullptr;
     ec_key = loadECKeyFromFile(private_key_file, public_key_file);
     if (!ec_key)
@@ -493,6 +494,21 @@ Security::signatureVerification (const std::string& tbsData_hex, const std::stri
     return validSignature;
 }
 
+uint64_t Security::getCurrentTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch());
+    uint64_t microseconds_since_epoch = static_cast<uint64_t>(duration.count());
+
+    // Calcola la differenza di epoch corretta
+    const uint64_t seconds_per_year = 365 * 24 * 60 * 60;
+    const uint64_t leap_seconds = 8 * 24 * 60 * 60; // 8 giorni bisestili in secondi
+    const uint64_t epoch_difference_seconds = (34 * seconds_per_year) + leap_seconds;
+    const uint64_t epoch_difference = epoch_difference_seconds * 1'000'000ULL;
+
+    return microseconds_since_epoch - epoch_difference;
+}
+
+
 GNDataRequest_t
 Security::createSecurePacket (GNDataRequest_t dataRequest, bool &isCertificate)
 {
@@ -523,13 +539,16 @@ Security::createSecurePacket (GNDataRequest_t dataRequest, bool &isCertificate)
     const uint8_t *buffer = dataRequest.data.getBufferAlloc();
     std::string packetContent((char *) buffer, (int) dataRequest.data.getBufferSize());
 
-    asn1cpp::setField (dataContentPayload->choice.unsecuredData,   packetContent); //205002800093010014007e81ff81274889e4482d1adc36560490ca3f821600800000a000
+    asn1cpp::setField (dataContentPayload->choice.unsecuredData,   packetContent);
     asn1cpp::setField (dataPayload->content, dataContentPayload);
     asn1cpp::setField (signPayload->data, dataPayload);
     asn1cpp::setField (tbs->payload, signPayload);
 
     asn1cpp::setField (tbs->headerInfo.psid, m_psid);
-    asn1cpp::setField (tbs->headerInfo.generationTime,  m_generationTime); //generationTime: 2023-12-11 18:45:16.939330 (629405121939330)
+
+    m_generationTime = getCurrentTimestamp();
+
+    asn1cpp::setField (tbs->headerInfo.generationTime,  m_generationTime);
     asn1cpp::setField (signData->tbsData, tbs);
 
     // For each second it will send a signer part with certificate, otherwise it will send digest.
@@ -548,10 +567,16 @@ Security::createSecurePacket (GNDataRequest_t dataRequest, bool &isCertificate)
         asn1cpp::setField (certificate->version, m_atmanager->getVersion());
         asn1cpp::setField (certificate->type, m_atmanager->getType());
         asn1cpp::setField (certificate->issuer.present, IssuerIdentifierSec_PR_sha256AndDigest);
-        asn1cpp::setField (certificate->issuer.choice.sha256AndDigest, m_atmanager->getIssuer());
-        asn1cpp::setField (certificate->toBeSigned.id.present, CertificateId_PR_name);
-        asn1cpp::setField (certificate->toBeSigned.id.choice.name, m_atmanager->getId_name());
-        asn1cpp::setField (certificate->toBeSigned.cracaId, m_atmanager->getCracaId());
+        std::cout << "Issuer: " << m_atmanager->getIssuer() << std::endl;
+        std::vector<unsigned char> issuer = hexStringToBytes (m_atmanager->getIssuer());
+        std::string m_issuer(issuer.begin(), issuer.end());
+        std::cout << "Issuer: " << m_issuer << " size:" << m_issuer.size() << std::endl;
+        asn1cpp::setField (certificate->issuer.choice.sha256AndDigest, m_issuer);
+        asn1cpp::setField (certificate->toBeSigned.id.present, CertificateId_PR_none);
+        asn1cpp::setField (certificate->toBeSigned.id.choice.none, m_atmanager->getId_none());
+        std::vector<unsigned char> craca = hexStringToBytes (m_atmanager->getCracaId());
+        std::string m_cracaID(craca.begin(), craca.end());
+        asn1cpp::setField (certificate->toBeSigned.cracaId, m_cracaID);
         asn1cpp::setField (certificate->toBeSigned.crlSeries, m_atmanager->getCrlSeries());
         asn1cpp::setField (certificate->toBeSigned.validityPeriod.start, m_atmanager->getValidityPeriod_start());
         asn1cpp::setField (certificate->toBeSigned.validityPeriod.duration.present, Duration_PR_hours);
@@ -564,7 +589,9 @@ Security::createSecurePacket (GNDataRequest_t dataRequest, bool &isCertificate)
         asn1cpp::setField (psid1->psid, m_atmanager->getPsid());
         auto servicePermission1 = asn1cpp::makeSeq (ServiceSpecificPermissions);
         asn1cpp::setField (servicePermission1->present, ServiceSpecificPermissions_PR_bitmapSsp);
-        asn1cpp::setField (servicePermission1->choice.bitmapSsp, m_atmanager->getBitmapSsp());
+        std::vector<unsigned char> bitmap1 = hexStringToBytes (m_atmanager->getBitmapSsp());
+        std::string m_bitmap1(bitmap1.begin(), bitmap1.end());
+        asn1cpp::setField (servicePermission1->choice.bitmapSsp, m_bitmap1);
         asn1cpp::setField (psid1->ssp, servicePermission1);
         asn1cpp::sequenceof::pushList (*appPermission, psid1);
 
@@ -572,7 +599,9 @@ Security::createSecurePacket (GNDataRequest_t dataRequest, bool &isCertificate)
         asn1cpp::setField (psid2->psid, m_atmanager->getPsid2());
         auto servicePermission2 = asn1cpp::makeSeq (ServiceSpecificPermissions);
         asn1cpp::setField (servicePermission2->present, ServiceSpecificPermissions_PR_bitmapSsp);
-        asn1cpp::setField (servicePermission2->choice.bitmapSsp, m_atmanager->getBitmapSsp2());
+        std::vector<unsigned char> bitmap2 = hexStringToBytes (m_atmanager->getBitmapSsp2());
+        std::string m_bitmap2(bitmap2.begin(), bitmap2.end());
+        asn1cpp::setField (servicePermission2->choice.bitmapSsp, m_bitmap2);
         asn1cpp::setField (psid2->ssp, servicePermission2);
         asn1cpp::sequenceof::pushList (*appPermission, psid2);
         asn1cpp::setField (certificate->toBeSigned.appPermissions, appPermission);
@@ -580,18 +609,26 @@ Security::createSecurePacket (GNDataRequest_t dataRequest, bool &isCertificate)
 
         asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.present, VerificationKeyIndicator_PR_verificationKey);
         asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.present, PublicVerificationKey_PR_ecdsaNistP256);
+        std::vector<unsigned char> verKey;
+        std::string m_verKey;
         switch(m_atmanager->getPresentVerKey()){
             case 1:
                 asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.present, EccP256CurvePoint_PR_x_only);
-                asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.choice.compressed_y_0, m_atmanager->getVerifykeyindicator());
+                verKey = hexStringToBytes (m_atmanager->getVerifykeyindicator());
+                m_verKey = std::string(verKey.begin(), verKey.end());
+                asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.choice.x_only, m_verKey);
                 break;
             case 3:
                 asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.present, EccP256CurvePoint_PR_compressed_y_0);
-                asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.choice.compressed_y_0, m_atmanager->getVerifykeyindicator());
+                verKey = hexStringToBytes (m_atmanager->getVerifykeyindicator());
+                m_verKey = std::string(verKey.begin(), verKey.end());
+                asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.choice.compressed_y_0,m_verKey);
                 break;
             case 4:
                 asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.present, EccP256CurvePoint_PR_compressed_y_1);
-                asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.choice.compressed_y_0, m_atmanager->getVerifykeyindicator());
+                verKey = hexStringToBytes (m_atmanager->getVerifykeyindicator());
+                m_verKey = std::string(verKey.begin(), verKey.end());
+                asn1cpp::setField (certificate->toBeSigned.verifyKeyIndicator.choice.verificationKey.choice.ecdsaNistP256.choice.compressed_y_1, m_verKey);
                 break;
             default:
                 break;
@@ -615,19 +652,27 @@ Security::createSecurePacket (GNDataRequest_t dataRequest, bool &isCertificate)
          */
         auto signatureCert = asn1cpp::makeSeq (Signature);
         asn1cpp::setField (signatureCert->present, Signature_PR_ecdsaNistP256Signature);
+        std::vector<unsigned char> rsignature;
+        std::string m_rsign;
         switch (m_atmanager->getPresentSignature())
         {
             case 1:
                 asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.present, EccP256CurvePoint_PR_x_only);
-                asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.choice.x_only, m_atmanager->getRSig());
+                rsignature = hexStringToBytes (m_atmanager->getRSig());
+                m_rsign = std::string(rsignature.begin(), rsignature.end());
+                asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.choice.x_only, m_rsign);
                 break;
             case 3:
                 asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.present, EccP256CurvePoint_PR_compressed_y_0);
-                asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.choice.compressed_y_0, m_atmanager->getRSig());
+                rsignature = hexStringToBytes (m_atmanager->getRSig());
+                m_rsign = std::string(rsignature.begin(), rsignature.end());
+                asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.choice.compressed_y_0, m_rsign);
                 break;
             case 4:
                 asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.present, EccP256CurvePoint_PR_compressed_y_1);
-                asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.choice.compressed_y_1, m_atmanager->getRSig());
+                rsignature = hexStringToBytes (m_atmanager->getRSig());
+                m_rsign = std::string(rsignature.begin(), rsignature.end());
+                asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.choice.compressed_y_1, m_rsign);
                 break;
             default:
                 break;
@@ -637,7 +682,9 @@ Security::createSecurePacket (GNDataRequest_t dataRequest, bool &isCertificate)
         asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.present,  EccP256CurvePoint_PR_x_only);
         asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.rSig.choice.x_only,  m_p256_x_only_Cert);
          */
-        asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.sSig, m_atmanager->getSSig());
+        std::vector<unsigned char> ssignature = hexStringToBytes (m_atmanager->getSSig());
+        std::string m_ssign(ssignature.begin(), ssignature.end());
+        asn1cpp::setField (signatureCert->choice.ecdsaNistP256Signature.sSig, m_ssign);
         asn1cpp::setField (certificate->signature, signatureCert);
 
         asn1cpp::sequenceof::pushList (*certList, certificate);

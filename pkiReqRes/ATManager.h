@@ -114,6 +114,25 @@ public:
         std::string s;
     } GNsignMaterial;
 
+    long getVersion(){ return m_auhtTicket.m_version; }
+    long getType(){ return m_auhtTicket.m_type; }
+    long getValidityPeriod_duration(){ return m_auhtTicket.m_validityPeriod_duration; }
+    int getId_none(){ return m_auhtTicket.m_id_none; }
+    int getPresentVerKey(){ return m_auhtTicket.presentVerKey; }
+    int getPresentSignature(){ return m_auhtTicket.presentSignature; }
+    uint16_t getCrlSeries(){ return m_auhtTicket.m_crlSeries; }
+    uint32_t getValidityPeriod_start(){ return m_auhtTicket.m_validityPeriod_start; }
+    unsigned long getPsid(){ return m_auhtTicket.m_psid; }
+    unsigned long getPsid2(){ return m_auhtTicket.m_psid2; }
+    std::string getCracaId(){ return m_auhtTicket.m_cracaId; }
+    std::string getIssuer(){ return m_auhtTicket.m_issuer; }
+    std::string getBitmapSsp(){ return m_auhtTicket.m_bitmapSsp; }
+    std::string getBitmapSsp2(){ return m_auhtTicket.m_bitmapSsp2; }
+    std::string getVerifykeyindicator(){ return m_auhtTicket.verifykeyindicator; }
+    std::string getRSig(){ return m_auhtTicket.m_rSig; }
+    std::string getSSig(){ return m_auhtTicket.m_Ssig; }
+
+    /*
     long getVersion(){ return m_auhtTicket.load().m_version; }
     long getType(){ return m_auhtTicket.load().m_type; }
     long getValidityPeriod_duration(){ return m_auhtTicket.load().m_validityPeriod_duration; }
@@ -132,6 +151,7 @@ public:
     std::string getVerifykeyindicator(){ return m_auhtTicket.load().verifykeyindicator; }
     std::string getRSig(){ return m_auhtTicket.load().m_rSig; }
     std::string getSSig(){ return m_auhtTicket.load().m_Ssig; }
+     */
 
     typedef struct _iniINFOAT{
         std::string recipientAA;
@@ -149,15 +169,19 @@ public:
     virtual ~ATManager(); // Distruttore
 
     void createRequest();
-    void run();
-    void terminate();
+    bool manageRequest();
+    //void run();
+    //void terminate();
 
-
+    void setECHex(std::string ecBytes) {m_ECHex=ecBytes;}
 
 private:
 
     std::vector<unsigned char> hexStringToBytes(const std::string &hex);
     void handleErrors();
+    void saveStringToFile(const std::string& key, const std::string& fileName);
+    std::string retrieveStringFromFile(const std::string& fileName);
+    std::string toHexString(const std::string& input);
     std::string to_hex_string(const unsigned char *data, size_t length);
     std::string to_hex_string(const std::vector<unsigned char> &data);
     EVP_PKEY *loadCompressedPublicKey(const std::string &compressedKey, int compression);
@@ -175,12 +199,35 @@ private:
     uint32_t getCurrentTimestamp32();
     std::vector<unsigned char> generateHMACKey(size_t length = 32);
     std::vector<unsigned char> computeHMACTag(const std::vector<unsigned char>& hmacKey, const std::vector<unsigned char>& verificationKey);
-    void atCheckThread();
+    //void atCheckThread();
     void sendPOST();
     void updateAT();
     bool isFileNotEmpty();
     iniAT readIniFile();
 
+
+    typedef struct _authorizationTicket
+    {
+        long m_version,
+                m_type,
+                m_validityPeriod_duration;
+        int m_id_none,
+                presentVerKey,
+                presentSignature;
+        uint16_t m_crlSeries;
+        uint32_t m_validityPeriod_start;
+        unsigned long m_psid,
+                m_psid2;
+        std::string  m_cracaId,
+                m_issuer,
+                m_bitmapSsp,
+                m_bitmapSsp2,
+                verifykeyindicator,
+                m_rSig,
+                m_Ssig;
+    } AT;
+
+    /*
     typedef struct _authorizationTicket
     {
         long m_version,
@@ -202,8 +249,11 @@ private:
                 m_rSig[100],
                 m_Ssig[100];
     } AT;
+    */
 
-    std::atomic<AT> m_auhtTicket;
+    AT m_auhtTicket;
+
+    //std::atomic<AT> m_auhtTicket;
 
     ATResponse atRes;
     ATResponse::GNcertificateDC atResCert;
@@ -234,6 +284,8 @@ private:
     std::string m_bitmapSspCAM ;
     std::string m_bitmapSspDENM ;
     std::string m_bitmapSspCPM ;
+
+    std::string m_ECHex="";
 };
 
 #endif // AT_MANAGER_H
